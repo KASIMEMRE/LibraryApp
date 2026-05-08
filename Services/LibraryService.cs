@@ -14,30 +14,64 @@ namespace LibraryApp.Services
 {
     internal class LibraryService : ILibraryService
     {
-        string connectionString = "Server=.\\SQLEXPRESS;Database=LibraryDB;Trusted_Connection=True;";
+        private readonly string connectionString = "Server=.\\SQLEXPRESS;Database=LibraryDB;Trusted_Connection=True;";
 
-        private string kitapDosyaYolu = "kitaplar.json";
-        private string kullaniciDosyaYolu = "kullanicilar.json";
+        private readonly List<Book> kitaplar = new List<Book>();
+        private readonly List<User> kullanicilar = new List<User>();
 
-        private List<Book> kitaplar = new List<Book>();
-        private List<User> kullanicilar = new List<User>();
+        #region DB Helpers
+        private void ExecuteNonQuery(string sql, Action<SqlCommand> bind = null)
+        {
+            using (var conn = new SqlConnection(connectionString))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                bind?.Invoke(cmd);
+                conn.Open();
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        private T ExecuteScalar<T>(string sql, Action<SqlCommand> bind = null)
+        {
+            using (var conn = new SqlConnection(connectionString))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                bind?.Invoke(cmd);
+                conn.Open();
+                var result = cmd.ExecuteScalar();
+                if (result == null || result == DBNull.Value) return default(T);
+                return (T)Convert.ChangeType(result, typeof(T));
+            }
+        }
+
+        private void ExecuteReader(string sql, Action<SqlCommand> bind, Action<SqlDataReader> readAction)
+        {
+            using (var conn = new SqlConnection(connectionString))
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                bind?.Invoke(cmd);
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        readAction(reader);
+                    }
+                }
+            }
+        }
+        #endregion
 
         public void KitapEkle(Book kitap)
         {
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            const string sql = "INSERT INTO Books (KitapAd, Yazar, SayfaSayisi, Tur, OduncVerildiMi) VALUES (@ad, @yazar, @sayfa, @tur, 0)";
+            ExecuteNonQuery(sql, cmd =>
             {
-                conn.Open();
-
-                string query = "INSERT INTO Books (KitapAd, Yazar, SayfaSayisi, Tur, OduncVerildiMi) VALUES (@ad, @yazar, @sayfa, @tur, 0)";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@ad", kitap.KitapAdi ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@yazar", kitap.Yazar ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@sayfa", kitap.SayfaSayisi);
-                    cmd.Parameters.AddWithValue("@tur", (int)kitap.Tur);
-                    cmd.ExecuteNonQuery();
-                }
-            }
+                cmd.Parameters.AddWithValue("@ad", kitap.KitapAdi ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@yazar", kitap.Yazar ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@sayfa", kitap.SayfaSayisi);
+                cmd.Parameters.AddWithValue("@tur", (int)kitap.Tur);
+            });
 
             kitaplar.Add(kitap);
             Console.WriteLine("Kitap eklendi!");
@@ -45,48 +79,31 @@ namespace LibraryApp.Services
 
         public void KitapListele()
         {
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            const string sql = "SELECT KitapAd FROM Books";
+            int i = 1;
+            ExecuteReader(sql, null, reader =>
             {
-                conn.Open();
-
-                string query = "SELECT * FROM Books";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                using (SqlDataReader reader = cmd.ExecuteReader())
-                {
-                    int i = 1;
-                    while (reader.Read())
-                    {
-                        Console.WriteLine($"{i}. {reader["KitapAd"]} ");
-                        i++;
-                    }
-                }
-            }
+                Console.WriteLine($"{i}. {reader["KitapAd"]}");
+                i++;
+            });
         }
 
         public void KullaniciEkle(User kullanici)
         {
             try
             {
-                using (SqlConnection conn = new SqlConnection(connectionString))
+                const string sql = "INSERT INTO Users (Ad, Soyad, UserType) VALUES (@ad, @soyad, @type); SELECT CAST(SCOPE_IDENTITY() AS int);";
+                var newId = ExecuteScalar<int?>(sql, cmd =>
                 {
-                    conn.Open();
-                    string query = "INSERT INTO Users (Ad, Soyad, UserType) VALUES (@ad, @soyad, @type); SELECT CAST(SCOPE_IDENTITY() AS int);";
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ad", kullanici.Ad ?? (object)DBNull.Value);
-                        cmd.Parameters.AddWithValue("@soyad", kullanici.Soyad ?? (object)DBNull.Value);
-                        cmd.Parameters.AddWithValue("@type", (int)kullanici.type);
-                        var result = cmd.ExecuteScalar();
-                        if (result != null && int.TryParse(result.ToString(), out int newId))
-                        {
-                            kullanici.Id = newId;
-                        }
-                        else
-                        {
-                            Console.WriteLine("Kayıt başarılı ama Id alınamadı.");
-                        }
-                    }
-                }
+                    cmd.Parameters.AddWithValue("@ad", kullanici.Ad ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@soyad", kullanici.Soyad ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@type", (int)kullanici.type);
+                });
+
+                if (newId.HasValue)
+                    kullanici.Id = newId.Value;
+                else
+                    Console.WriteLine("Kayıt başarılı ama Id alınamadı.");
 
                 kullanicilar.Add(kullanici);
                 Console.WriteLine("Kullanıcı eklendi.");
@@ -99,21 +116,13 @@ namespace LibraryApp.Services
 
         public void KullaniciListele()
         {
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            const string sql = "SELECT Id, Ad, Soyad FROM Users";
+            int i = 1;
+            ExecuteReader(sql, null, reader =>
             {
-                conn.Open();
-                string query = "SELECT Id, Ad, Soyad, UserType FROM Users";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                using (SqlDataReader reader = cmd.ExecuteReader())
-                {
-                    int i = 1;
-                    while (reader.Read())
-                    {
-                        Console.WriteLine($"{i}. [{reader["Id"]}] {reader["Ad"]} {reader["Soyad"]}");
-                        i++;
-                    }
-                }
-            }
+                Console.WriteLine($"{i}. [{reader["Id"]}] {reader["Ad"]} {reader["Soyad"]}");
+                i++;
+            });
         }
 
         public void KitapOduncAl(int kitapIndex, User kullanici)
@@ -136,7 +145,7 @@ namespace LibraryApp.Services
                 return;
             }
 
-            Book kitap = kitaplar[kitapIndex];
+            var kitap = kitaplar[kitapIndex];
 
             if (kitap.OduncVerildiMi)
             {
@@ -147,18 +156,13 @@ namespace LibraryApp.Services
             kitap.OduncAl(kullanici);
             kullanici.AldigiKitaplar.Add(kitap);
 
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            const string sql = "INSERT INTO Loans (BookAd, UserId, AlisTarihi) VALUES (@bookAd, @userId, @tarih)";
+            ExecuteNonQuery(sql, cmd =>
             {
-                conn.Open();
-                string query = "INSERT INTO Loans (BookAd, UserId, AlisTarihi) VALUES (@bookAd, @userId, @tarih)";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@bookAd", kitap.KitapAdi);
-                    cmd.Parameters.AddWithValue("@userId", kullanici.Id);
-                    cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                    cmd.ExecuteNonQuery();
-                }
-            }
+                cmd.Parameters.AddWithValue("@bookAd", kitap.KitapAdi ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@userId", kullanici.Id);
+                cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
+            });
 
             Console.WriteLine($"{kullanici.Ad} kitabı başarıyla aldı.");
         }
@@ -177,33 +181,26 @@ namespace LibraryApp.Services
                 return;
             }
 
-            Book kitap = kitaplar[kitapIndex];
+            var kitap = kitaplar[kitapIndex];
 
-            if (kitap.IadeEt(kullanici))
-            {
-                if (kullanici.AldigiKitaplar.Contains(kitap))
-                {
-                    kullanici.AldigiKitaplar.Remove(kitap);
-                }
-
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    conn.Open();
-                    string query = "UPDATE Loans SET IadeTarihi = @tarih WHERE BookAd = @bookAd AND UserId = @userId AND IadeTarihi IS NULL";
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ad", kitap.KitapAdi ?? (object)DBNull.Value);
-                        cmd.Parameters.AddWithValue("@yazar", kitap.Yazar ?? (object)DBNull.Value);
-                        cmd.ExecuteNonQuery();
-                    }
-                }
-
-                Console.WriteLine($"{kullanici.Ad} kitabı başarıyla iade etti.");
-            }
-            else
+            if (!kitap.IadeEt(kullanici))
             {
                 Console.WriteLine("Bu kitabı iade edemezsiniz!");
+                return;
             }
+
+            if (kullanici.AldigiKitaplar.Contains(kitap))
+                kullanici.AldigiKitaplar.Remove(kitap);
+
+            const string sql = "UPDATE Loans SET IadeTarihi = @tarih WHERE BookAd = @bookAd AND UserId = @userId AND IadeTarihi IS NULL";
+            ExecuteNonQuery(sql, cmd =>
+            {
+                cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
+                cmd.Parameters.AddWithValue("@bookAd", kitap.KitapAdi ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@userId", kullanici.Id);
+            });
+
+            Console.WriteLine($"{kullanici.Ad} kitabı başarıyla iade etti.");
         }
 
         public void KitapSil(int kitapIndex, User kullanici)
@@ -220,19 +217,13 @@ namespace LibraryApp.Services
                 return;
             }
 
-            Book kitap = kitaplar[kitapIndex];
-
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            var kitap = kitaplar[kitapIndex];
+            const string sql = "DELETE FROM Books WHERE KitapAd = @ad AND Yazar = @yazar";
+            ExecuteNonQuery(sql, cmd =>
             {
-                conn.Open();
-                string query = "DELETE FROM Books WHERE KitapAd = @ad AND Yazar = @yazar";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@ad", kitap.KitapAdi ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@yazar", kitap.Yazar ?? (object)DBNull.Value);
-                    cmd.ExecuteNonQuery();
-                }
-            }
+                cmd.Parameters.AddWithValue("@ad", kitap.KitapAdi ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@yazar", kitap.Yazar ?? (object)DBNull.Value);
+            });
 
             kitaplar.RemoveAt(kitapIndex);
             Console.WriteLine("Kitap silindi!");
@@ -252,18 +243,9 @@ namespace LibraryApp.Services
                 return;
             }
 
-            User silinecek = kullanicilar[index];
-
-            using (SqlConnection conn = new SqlConnection(connectionString))
-            {
-                conn.Open();
-                string query = "DELETE FROM Users WHERE Id = @id";
-                using (SqlCommand cmd = new SqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@id", silinecek.Id);
-                    cmd.ExecuteNonQuery();
-                }
-            }
+            var silinecek = kullanicilar[index];
+            const string sql = "DELETE FROM Users WHERE Id = @id";
+            ExecuteNonQuery(sql, cmd => cmd.Parameters.AddWithValue("@id", silinecek.Id));
 
             kullanicilar.RemoveAt(index);
             Console.WriteLine("Kullanıcı silindi!");
@@ -272,45 +254,41 @@ namespace LibraryApp.Services
         public User Login(string ad, string soyad)
         {
             var kullanici = kullanicilar.FirstOrDefault(x => x.Ad == ad && x.Soyad == soyad);
-
-            if (kullanici == null)
+            if (kullanici != null)
             {
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    conn.Open();
-                    string query = "SELECT Id, Ad, Soyad, UserType FROM Users WHERE Ad = @ad AND Soyad = @soyad";
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ad", ad ?? (object)DBNull.Value);
-                        cmd.Parameters.AddWithValue("@soyad", soyad ?? (object)DBNull.Value);
-                        using (SqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                var u = new User
-                                {
-                                    Id = Convert.ToInt32(reader["Id"]),
-                                    Ad = reader["Ad"].ToString(),
-                                    Soyad = reader["Soyad"].ToString(),
-                                    //type = (UserType)Convert.ToInt32(reader["UserType"])
-                                };
-                                kullanicilar.Add(u);
-                                kullanici = u;
-                            }
-                        }
-                    }
-                }
+                Console.WriteLine($"Hoşgeldiniz {kullanici.Ad}");
+                return kullanici;
             }
 
-            if (kullanici == null)
+            const string sql = "SELECT Id, Ad, Soyad, UserType FROM Users WHERE Ad = @ad AND Soyad = @soyad";
+            User found = null;
+            ExecuteReader(sql, cmd =>
+            {
+                cmd.Parameters.AddWithValue("@ad", ad ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@soyad", soyad ?? (object)DBNull.Value);
+            },
+            reader =>
+            {
+                var u = new User
+                {
+                    Id = Convert.ToInt32(reader["Id"]),
+                    Ad = reader["Ad"].ToString(),
+                    Soyad = reader["Soyad"].ToString()
+                };
+                // Eğer User sınıfında UserType enum/alanı varsa aşağıdaki satırı açabilirsiniz:
+                // u.type = (UserType)Convert.ToInt32(reader["UserType"]);
+                found = u;
+            });
+
+            if (found == null)
             {
                 Console.WriteLine("Kullanıcı bulunamadı.");
                 return null;
             }
 
-            Console.WriteLine($"Hoşgeldiniz {kullanici.Ad}");
-            return kullanici;
+            kullanicilar.Add(found);
+            Console.WriteLine($"Hoşgeldiniz {found.Ad}");
+            return found;
         }
-
     }
 }
